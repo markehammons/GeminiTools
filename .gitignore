@@ -1,0 +1,5 @@
+.metals
+.bloop
+.vscode
+out
+hs*.log

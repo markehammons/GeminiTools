@@ -53,7 +53,6 @@ object GeminiServer:
         )
       )
     yield new GeminiServer:
-      val socket = serverSocket
       val inputSink = ZSink
         .collectAll[Char]
         .map(_.toArray)
@@ -66,61 +65,70 @@ object GeminiServer:
             Option(uri.getQuery)
           )
         )
-
       def handleRoutes[R](fn: Route[R])(using Tag[R]) =
-        def task(num: Int) = ZIO
-          .scoped(
-            for {
-              comSocket <- ZIO.fromAutoCloseable(
-                ZIO.attemptBlocking(socket.accept.asInstanceOf[SSLSocket])
-              )
-              _ <- Console.printLine(s"starting handshake on unit $num")
-              clientAddress = comSocket.getInetAddress
-              _ = comSocket.setWantClientAuth(true)
-              _ <- ZIO.attempt(comSocket.startHandshake)
-              peerAuth <- ZIO.succeed(
-                Try(comSocket.getSession)
-                  .map(s => s.getPeerPrincipal -> s.getPeerCertificates.toList)
-                  .toOption
-              )
-              _ <- Console.printLine(peerAuth.toString)
-              _ <- Console.printLine("comSocket allocated")
-              uri <- ZStream
-                .fromReaderScoped(
-                  ZIO.succeed(InputStreamReader(comSocket.getInputStream))
+        val stream = 
+          for 
+            scope <- ZStream.scoped(ZIO.acquireReleaseExit(Scope.make)((scope, exit) => scope.close(exit)))
+            socket <- ZStream.scoped(ZIO.fromAutoCloseable(ZIO.succeed(serverSocket)))
+
+            connection <- ZStream
+                .repeatZIO(
+                  ZIO.attemptBlockingCancelable(
+                    socket.accept.asInstanceOf[SSLSocket]
+                  )(ZIO.succeed(socket.close)).pipe(scope.extend(_))
                 )
-                .tap(c => Console.printLine(c.toString))
-                .takeWhile(c => c != '\r' && c != '\n')
-                .run(inputSink)
-              pf <- fn
-              _ <- Console.printLine("preparing response")
-              stream = pf.applyOrElse(
-                GeminiRequest(clientAddress.toString, peerAuth, uri),
-                _ => ZStream.fromIterable("51 NotFound\r\n".getBytes("UTF-8"))
-              )
-              _ <- stream.run(
-                ZSink.fromOutputStreamScoped(
-                  ZIO.succeed(comSocket.getOutputStream)
+          yield connection
+
+        stream
+          .mapZIOPar(8)(comSocket =>
+            ZIO.scoped {
+              for {
+                scope <- ZIO.scope
+                _ <- scope.extend(ZIO.fromAutoCloseable(ZIO.succeed(comSocket)))
+                clientAddress <- ZIO.succeed(comSocket.getInetAddress)
+                _ <- ZIO.attempt(comSocket.setWantClientAuth(true))
+                _ <- ZIO.attempt(comSocket.startHandshake)
+                peerAuth <- ZIO.succeed(
+                  Try(comSocket.getSession)
+                    .map(s =>
+                      s.getPeerPrincipal -> s.getPeerCertificates.toList
+                    )
+                    .toOption
                 )
-              )
-              _ <- Console.printLine("responded")
-            } yield ()
+                _ <- ZIO.log(peerAuth.toString)
+                _ <- ZIO.log("comSocket allocated")
+                uri <- ZStream
+                  .fromReaderScoped(
+                    ZIO.succeed(InputStreamReader(comSocket.getInputStream))
+                  )
+                  .tap(c => ZIO.log(c.toString))
+                  .takeWhile(c => c != '\r' && c != '\n')
+                  .run(inputSink)
+                pf <- fn
+                _ <- ZIO.log("preparing response")
+                stream = pf.applyOrElse(
+                  GeminiRequest(clientAddress.toString, peerAuth, uri),
+                  _ => ZStream.fromIterable("51 NotFound\r\n".getBytes("UTF-8"))
+                )
+                _ <- stream.run(
+                  ZSink.fromOutputStreamScoped(
+                    ZIO.succeed(comSocket.getOutputStream)
+                  )
+                )
+                _ <- ZIO.log("responded")
+              } yield ()
+            }
           )
           .catchSome {
-            case e: SSLHandshakeException => Console.printLine(e.getMessage)
-            case s: SocketException       => Console.printLine(s.getMessage)
+            case e: SSLHandshakeException =>
+              ZStream.logErrorCause(Cause.fail(e))
+            case s: SocketException => ZStream.logErrorCause(Cause.fail(s))
             case e: Throwable =>
-              ZIO.logErrorCause(
-                "Unexpected error responding to connection",
+              ZStream.logErrorCause(
                 Cause.fail(e)
               )
           }
-          .forever
-
-        ZIO
-          .collectAllPar(ZIO.replicate(8)(Random.nextInt.flatMap(task)))
-          .withParallelism(8)
-          .as(())
+          .runDrain
   }
 
   val default = SecureRandom.live >+> KeyStore.live >+> GeminiServer.live

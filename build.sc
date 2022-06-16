@@ -10,13 +10,6 @@ object sagittarius extends BaseModule with DockerModule {
     ivy"dev.zio::zio-streams:2.0.0-RC6"
   )
   def scalacOptions = Seq("-source:future")
-  object docker extends DockerConfig {
-    def tags = List("mark.hammons.fr/sagittarius")
-
-    def baseImage = "eclipse-temurin:latest"
-    def exposedPorts= Seq(1965, 1965)
-    def executable = "podman"
-  }
 }
 
 trait BaseModule extends ScalaModule with ScalafmtModule {
@@ -27,3 +20,13 @@ trait BaseModule extends ScalaModule with ScalafmtModule {
   )
 }
 
+trait DemoModule extends BaseModule with ScalafmtModule {
+  def millSourcePath = os.pwd / "demos" / name 
+  def name: String
+}
+
+object messageboard extends DemoModule with ScalaModule with DockerModule {
+  def name = "messageboard"
+
+  def moduleDeps = Seq(sagittarius)
+}

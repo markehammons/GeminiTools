@@ -11,8 +11,6 @@ import java.nio.file.Paths
 import java.nio.file.Path
 import java.nio.file.Files
 
-//ef5605440ba7f3b8e65fab817143e2fec8dfe9db09d54f54b591d17c20184cb2
-//ef5605440ba7f3b8e65fab817143e2fec8dfe9db09d54f54b591d17c20184cb2
 
 object MessageBoard extends ZIOAppDefault:
   val routes = Route.needful {
@@ -31,7 +29,7 @@ object MessageBoard extends ZIOAppDefault:
       for 
         ref <- ZIO.service[Ref[List[Post]]]
         post = Post(
-          req.authInfo.map(_._1.getName).getOrElse("Anonymous"),
+          req.authInfo.map(_._1.getCNName).getOrElse("Anonymous"),
           postContent, 
           LocalDateTime.now
         )
@@ -47,6 +45,7 @@ object MessageBoard extends ZIOAppDefault:
   val conf = ZLayer.succeed(ServerConfig(1965, List("localhost")))
   def run = 
     val task = for 
+      _ <- ZIO.logInfo("test")
       ref <- Ref.make(List.empty[Post])
       server <- handleRoutes(
         routes.provideEnvironment(ZEnvironment(ref))

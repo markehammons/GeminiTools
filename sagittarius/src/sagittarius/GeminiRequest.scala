@@ -8,3 +8,8 @@ final case class GeminiRequest(
   authInfo: Option[(Principal, List[Certificate])],
   uri: GeminiURI
 )
+
+extension (p: Principal) 
+  def getCNName = p.getName match 
+    case s"CN=$name,$_" => name
+    case s"CN=$name" =>  name

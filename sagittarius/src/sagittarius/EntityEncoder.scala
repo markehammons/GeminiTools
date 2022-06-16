@@ -10,3 +10,6 @@ object EntityEncoder:
   def stringToStream(str: String) = ZStream.fromIterable(str.getBytes("UTF-8"))
   given EntityEncoder[UStream[Byte]] with
     def apply(a: UStream[Byte]) = a
+
+  given EntityEncoder[String] with 
+    def apply(str: String) = ZStream.fromIterable(str.getBytes("UTF-8"))

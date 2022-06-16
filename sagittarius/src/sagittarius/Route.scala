@@ -2,23 +2,27 @@ package sagittarius
 
 import zio.stream.*
 import zio.*
-type Route[R] = URIO[R, PartialFunction[GeminiRequest, Stream[Throwable, Byte]]]
+import scala.annotation.targetName
+type Route[R] = URIO[R, PartialFunction[GeminiRequest, UStream[Byte]]]
 
 object Route:
   def needful[R](
-    pf: PartialFunction[GeminiRequest, URIO[R, Status]]
+    pf: PartialFunction[GeminiRequest, RIO[R, Status]]
   )(using Tag[R]): Route[R] =
     for r <- ZIO.service[R]
     yield pf.andThen(rio =>
-      ZStream.fromZIO(rio).provideEnvironment(ZEnvironment(r)).flatMap(_.encode)
+      ZStream.fromZIO(rio).provideEnvironment(ZEnvironment(r)).flatMap(_.encode).catchAll(t => Status.TemporaryFailure(t.getMessage).encode)
     )
 
   def apply(pf: PartialFunction[GeminiRequest, Status]): Route[Any] =
     ZIO.succeed(pf.andThen(_.encode))
 
+  @targetName("taskApply")
+  def apply(pf: PartialFunction[GeminiRequest, Task[Status]]): Route[Any] = ZIO.succeed(pf.andThen(task => ZStream.fromZIO(task).flatMap(_.encode).catchAll(t => Status.TemporaryFailure(t.getMessage).encode)))
+
 object CertifiedRoute:
   def apply(
-    pf: PartialFunction[GeminiRequest, Stream[Throwable, Byte]]
+    pf: PartialFunction[GeminiRequest, UStream[Byte]]
   ): Route[Any] = ZIO.succeed {
     case Certified(pf(g)) => g
     case pf(_) =>
